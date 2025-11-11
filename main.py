@@ -22,6 +22,14 @@ roles = ["Admin","Tech Support","Calculo","Electronica Digital","Algebra","ICO",
 
 secret_role = "trusted"
 
+def load_bad_words(path="bad-words"):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return [line.strip().lower() for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
+
 def get_role_case_insensitive(guild: discord.Guild, name: str):
     """Return the role whose name matches case-insensitively, or None."""
     return discord.utils.find(lambda r: r.name.lower() == name.lower(), guild.roles)
@@ -89,9 +97,12 @@ async def hourly_sync():
 
 @bot.event
 async def on_ready():
+    global bad_words 
+    bad_words = load_bad_words()
     print(f"We are ready to go in, {bot.user.name}")
     await sync_users_to_list()
     hourly_sync.start()
+    
 
 @bot.event
 async def on_member_remove(member):
@@ -124,13 +135,13 @@ async def on_member_join(member: discord.Member):
     real_name = "-" 
     try:
         await member.send(f"Welcome to the server, {member.display_name}! 🎉")
-        await member.send("What is your actual name? Reply here within 2 minutes.")
+        await member.send("What is your actual name?")
 
         def check(m: discord.Message):
             return m.author == member and isinstance(m.channel, discord.DMChannel)
 
         # wait_for with a sensible timeout
-        msg = await bot.wait_for("message", check=check, timeout=120)
+        msg = await bot.wait_for("message", check=check, timeout=None)
         # sanitize pipe to keep your `|`-separated file format
         real_name = msg.content.replace("|", "¦").strip() or "-"
         await member.send(f"Thanks, {real_name}! Your name has been noted.")
@@ -179,14 +190,58 @@ async def on_member_join(member: discord.Member):
 async def on_message(message):
     if message.author == bot.user:
         return
-
-    if "shit" in message.content.lower():
-        await message.delete()
-        await message.channel.send(f"{message.author.mention} - dont use that word!")
-
+    content_lc = message.content.lower()
+    if any(bw in content_lc for bw in bad_words):
+        try:
+            await message.delete()
+        except discord.Forbidden:
+            pass
+        await message.channel.send(f"{message.author.mention} - Don't use that word!")
     await bot.process_commands(message)
 
+    
+    
 
+@bot.command()
+@commands.has_role(secret_role)
+async def study(ctx, member: discord.Member):
+    try:
+        await member.send(f"Hey what would you like to study?, {member.display_name}!")
+        await member.send(f"What do you wish to study? Calculo, Electronica Digital, Algebra, ICO, Progrmacion?")
+        def check(m):
+            return m.author == member and isinstance(m.channel, discord.DMChannel)
+        msg = await bot.wait_for("message", check=check, timeout=None)
+        study_choice = msg.content.replace("|","!").strip()
+    
+        valid_roles = {
+            "Calculo": "Calculo",
+            "Electronica Digital": "Electronica Digital",
+            "Algebra": "Algebra",
+            "ICO": "ICO",
+            "Programacion": "Programacion"
+    }
+        role_name = valid_roles.get(study_choice)
+        if role_name: 
+            role = discord.utils.get(member.guild.roles, name=role_name)
+            if role:
+                await member.add_roles(role, reason=f"For study of {role} ")
+                system_channel = member.guild.system_channel
+            
+                if system_channel:
+                    await system_channel.send(f"{member.mention} has been assigned to {role.name}")
+                else:
+                    await member.send("Role not found in the server.")
+            else:
+                await member.send("Invalid study choice. Please try again.")
+
+    except asyncio.TimeoutError:
+        await member.send("You took too long to respond. Please try the command again.")
+    except discord.Forbidden:
+        await member.send("I don't have permission to assign roles. Please contact tech support.")
+
+        
+
+    
 
 @bot.command()
 async def hello(ctx):
